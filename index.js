@@ -7,8 +7,9 @@ const express = require('express');
 const mysql = require('mysql2/promise');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
-// REDIS Değişikliği: Redis istemcisini içe aktar
+
 const Redis = require('ioredis');
+const { version } = require('os');
 // Initialize Express app
 const app = express();
 if (process.env.NODE_ENV === 'production' || process.env.FORCE_HTTPS) {
@@ -17,7 +18,7 @@ if (process.env.NODE_ENV === 'production' || process.env.FORCE_HTTPS) {
     if (req.headers['x-forwarded-proto'] !== 'https' && req.headers['x-forwarded-proto'] !== undefined) {
       return res.redirect(301, 'https://' + req.headers.host + req.url);
     }
-    // Eğer header yoksa (localde çalışıyorsa) devam et
+    
     next();
   });
 }
@@ -42,7 +43,7 @@ const pool = mysql.createPool({
     return next();
   }
 });
-// REDIS Değişikliği: Redis istemcisini oluştur (Upstash URL ile, hem local hem production için .env'den çek)
+// Initialize Redis client
 const redis = new Redis(process.env.REDIS_URL, {
   retryStrategy: times => Math.min(times * 50, 2000),
   maxRetriesPerRequest: null,    
@@ -67,7 +68,7 @@ const getCleanIp = (req) => {
   return 'unknown';
 };
 // API Key Validation Middleware (Handles single/multiple keys, rejects duplicates)
-// ====== YENİ: Authorization Header’dan Bearer Token okuma ======
+// ====== Authorization Header’dan Bearer Token ======
 function extractApiKey(req) {
   // 1. Authorization: Bearer ...
   const authHeader = req.headers.authorization || req.headers.Authorization || '';
@@ -77,7 +78,7 @@ function extractApiKey(req) {
   // 2. Query parameter ?key=...
   if (req.query.key) {
     const keys = Array.isArray(req.query.key) ? req.query.key : [req.query.key];
-    // Birden fazla key göndermişse hemen reddet
+    
     if (keys.length > 1) {
       throw new Error('MULTIPLE_QUERY_KEYS');
     }
@@ -85,7 +86,6 @@ function extractApiKey(req) {
   }
   return null;
 }
-// ====== GÜNCELLENMİŞ VE TAM GÜVENLİ validateApiKey Middleware’i ======
 async function validateApiKey(req, res, next) {
   let key;
   let keySource = 'none';
@@ -108,9 +108,9 @@ async function validateApiKey(req, res, next) {
   if (!key) {
     req.isKeyValid = false;
     req.usedKeySource = 'none';
-    return next(); // Anahtar yok → rate limit
+    return next(); 
   }
-  // Hem header hem query’de key varsa çatışma
+  // 
   const hasHeader = !!(req.headers.authorization || req.headers.Authorization);
   const hasQuery = !!req.query.key;
   if (hasHeader && hasQuery) {
@@ -120,7 +120,7 @@ async function validateApiKey(req, res, next) {
       message: 'Do not send API key in both Authorization header and query parameter.'
     });
   }
-  // Hangi kaynaktan geldiğini belirle
+  
   keySource = hasHeader ? 'header' : 'query';
   try {
     const [rows] = await pool.query(
@@ -131,7 +131,7 @@ async function validateApiKey(req, res, next) {
       req.isKeyValid = true;
       req.apiKeyInfo = rows[0];
       req.usedKeySource = keySource;
-      // Query’den geldiyse temizle (log ve URL temizliği için)
+      
       if (hasQuery) delete req.query.key;
       return next();
     } else {
@@ -205,19 +205,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-/**
- * NEW ENDPOINT: /api/v1/synonyms
- * - Version: Rota v1 olarak güncellendi.
- * - If no search → returns random word
- * - If ?search=... →
- * 1. First checks 'word' column
- * 2. If not found → searches in JSON 'synonyms' array
- * 3. Returns first match
- * - NEW: If found in synonyms →
- * - word = searched word
- * - original word moved to synonyms array (at the beginning)
- */
-// Version: Rota güncellendi.
+// Main API Endpoint: Get synonyms
 app.get('/api/v1/synonyms', async (req, res) => {
   const search = req.query.search?.trim();
   const hasKey = !!req.query.key;
@@ -254,7 +242,8 @@ app.get('/api/v1/synonyms', async (req, res) => {
           message: 'No words in the database.',
           meta: {
             timestamp: new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }),
-            powered_by: 'IELTS Synonyms API'
+            powered_by: 'IELTS Synonyms API',
+            apiVersion: 'v1.0'
           }
         });
       }
@@ -287,6 +276,7 @@ app.get('/api/v1/synonyms', async (req, res) => {
           searched: search || 'random',
           timestamp: new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }),
           powered_by: 'IELTS Synonyms API',
+          apiVersion: 'v1.0',
           api_key_used: hasKey
         }
       });
@@ -338,6 +328,7 @@ app.get('/api/v1/synonyms', async (req, res) => {
         found_in: source,
         timestamp: new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }),
         powered_by: 'IELTS Synonyms API',
+        apiVersion: 'v1.0',
         api_key_used: hasKey,
         ...(hasKey && { note: 'Unlimited access provided with API key.' })
       }
@@ -357,7 +348,8 @@ app.get('/api/v1/synonyms', async (req, res) => {
       details: error.message,
       meta: {
         timestamp: new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }),
-        powered_by: 'IELTS Synonyms API'
+        powered_by: 'IELTS Synonyms API',
+        apiVersion: 'v1.0'
       }
     });
   } finally {
@@ -368,17 +360,18 @@ app.get('/api/v1/synonyms', async (req, res) => {
 app.get(['/api', '/api/'], (req, res) => {
   res.json({
     api: "IELTS Synonyms API",
-    version: "v1.0", // Version: Versiyon bilgisi güncellendi.
-    endpoint: "/api/v1/synonyms", // Version: Endpoint v1 olarak güncellendi.
+    version: "v1.0", 
+    endpoint: "/api/v1/synonyms", 
     examples: [
-      "GET /api/v1/synonyms", // Version: Örnekler v1 olarak güncellendi.
-      "GET /api/v1/synonyms?search=fast", // Version: Örnekler v1 olarak güncellendi.
-      "GET /api/v1/synonyms?search=quick&key=YOUR_KEY" // Version: Örnekler v1 olarak güncellendi.
+      "GET /api/v1/synonyms", 
+      "GET /api/v1/synonyms?search=fast", 
+      "GET /api/v1/synonyms?search=quick&key=YOUR_KEY"
     ],
     rate_limit: "500/day (without key)",
     unlimited: "Use ?key=...",
     documentation: "https://synon-6f0dbe944806.herokuapp.com/",
-    contact: "antonwise1980@gmail.com"
+    contact: "antonwise1980@gmail.com",
+    apiVersion: 'v1.0'
   });
 });
 
