@@ -408,7 +408,7 @@ async function loadPopularSearches() {
     const json = await res.json();
 
     if (!json.success || json.data.length === 0) {
-      body.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-5">Henüz yeterli veri yok</td></tr>`;
+      body.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-5">No data yet enough..</td></tr>`;
     } else {
       body.innerHTML = json.data.map((item, i) => `
         <tr>
