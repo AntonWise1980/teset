@@ -243,7 +243,8 @@ app.get('/api/v1/synonyms', async (req, res) => {
           meta: {
             timestamp: new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }),
             powered_by: 'IELTS Synonyms API',
-            apiVersion: 'v1.0'
+            apiVersion: 'v1.0',
+            yoursIP: getCleanIp(req)
           }
         });
       }
@@ -277,6 +278,7 @@ app.get('/api/v1/synonyms', async (req, res) => {
           timestamp: new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }),
           powered_by: 'IELTS Synonyms API',
           apiVersion: 'v1.0',
+          yoursIP: getCleanIp(req),
           api_key_used: hasKey
         }
       });
@@ -329,6 +331,7 @@ app.get('/api/v1/synonyms', async (req, res) => {
         timestamp: new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }),
         powered_by: 'IELTS Synonyms API',
         apiVersion: 'v1.0',
+        yoursIP: getCleanIp(req),
         api_key_used: hasKey,
         ...(hasKey && { note: 'Unlimited access provided with API key.' })
       }
@@ -349,7 +352,8 @@ app.get('/api/v1/synonyms', async (req, res) => {
       meta: {
         timestamp: new Date().toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }),
         powered_by: 'IELTS Synonyms API',
-        apiVersion: 'v1.0'
+        apiVersion: 'v1.0',
+        yoursIP: getCleanIp(req)
       }
     });
   } finally {
