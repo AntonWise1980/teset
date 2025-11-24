@@ -212,6 +212,44 @@ Authorization: Bearer <span class="text-danger">YOUR_API_KEY</span></pre>
       </div>
     </div>
   </section>
+<section id="popular-searches" class="mb-5 mt-5">
+  <div class="card shadow-lg border-0">
+    <div class="card-body p-5">
+      <h3 class="text-center mb-4 fw-bold text-primary">
+        <i class="bi bi-graph-up-arrow me-2"></i> En Çok Aranan Kelimeler (Canlı)
+      </h3>
+      <p class="text-center text-muted mb-5">Binlerce günlük aramadan gerçek zamanlı istatistik</p>
+
+      <div id="popularLoading" class="text-center py-5">
+        <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
+          <span class="visually-hidden">Yükleniyor...</span>
+        </div>
+      </div>
+
+      <div id="popularTable" class="table-responsive" style="display:none;">
+        <table class="table table-hover align-middle">
+          <thead class="table-primary">
+            <tr>
+              <th width="50">#</th>
+              <th>Kelime</th>
+              <th class="text-center">Arama Sayısı</th>
+              <th>Son Arama</th>
+              <th>Ülke</th>
+            </tr>
+          </thead>
+          <tbody id="popularBody"></tbody>
+        </table>
+      </div>
+
+      <div class="text-center mt-4">
+        <small class="text-muted">
+          Son güncelleme: <span id="popularUpdated">--</span>
+        </small>
+      </div>
+    </div>
+  </div>
+</section>
+
 
   <section id="example-response" class="mb-5">
     <h2 class="h3 fw-bold text-dark border-bottom pb-3 mb-4"><i class="bi bi-file-earmark-code me-2 text-primary"></i>Example JSON Response</h2>
@@ -356,6 +394,48 @@ async function doSearch() {
     alert.style.display = 'block';
   }
 }
+</script>
+<script>
+// ============= EN ÇOK ARANANLAR CANLI YÜKLEME =============
+async function loadPopularSearches() {
+  const table = document.getElementById('popularTable');
+  const body = document.getElementById('popularBody');
+  const loading = document.getElementById('popularLoading');
+  const updatedEl = document.getElementById('popularUpdated');
+
+  try {
+    const res = await fetch('/api/v1/popular');
+    const json = await res.json();
+
+    if (!json.success || json.data.length === 0) {
+      body.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-5">Henüz yeterli veri yok</td></tr>`;
+    } else {
+      body.innerHTML = json.data.map((item, i) => `
+        <tr>
+          <td><strong class="text-primary">${i + 1}</strong></td>
+          <td><span class="badge bg-primary fs-5 px-3 py-2">${item.word}</span></td>
+          <td class="text-center fw-bold text-dark">${item.count.toLocaleString('tr-TR')}</td>
+          <td><small class="text-muted">${item.last_seen}</small></td>
+          <td><span class="text-muted">${item.country}</span></td>
+        </tr>
+      `).join('');
+      updatedEl.textContent = json.meta.updated_at;
+    }
+
+    table.style.display = 'block';
+    loading.style.display = 'none';
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="5" class="text-center text-danger">Veri yüklenemedi</td></tr>`;
+    table.style.display = 'block';
+    loading.style.display = 'none';
+  }
+}
+
+// Sayfa yüklendiğinde ve her 60 saniyede bir güncelle
+document.addEventListener('DOMContentLoaded', () => {
+  loadPopularSearches();
+  setInterval(loadPopularSearches, 60000); // 1 dakikada bir
+});
 </script>
 </body>
 </html>
