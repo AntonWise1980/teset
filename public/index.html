@@ -216,13 +216,13 @@ Authorization: Bearer <span class="text-danger">YOUR_API_KEY</span></pre>
   <div class="card shadow-lg border-0">
     <div class="card-body p-5">
       <h3 class="text-center mb-4 fw-bold text-primary">
-        <i class="bi bi-graph-up-arrow me-2"></i> En Çok Aranan Kelimeler (Canlı)
+        <i class="bi bi-graph-up-arrow me-2"></i> Most Searched Words (Live)
       </h3>
-      <p class="text-center text-muted mb-5">Binlerce günlük aramadan gerçek zamanlı istatistik</p>
+      <p class="text-center text-muted mb-5">Real-time statistics from thousands of daily searches</p>
 
       <div id="popularLoading" class="text-center py-5">
         <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
-          <span class="visually-hidden">Yükleniyor...</span>
+          <span class="visually-hidden">Loading...</span>
         </div>
       </div>
 
@@ -231,10 +231,10 @@ Authorization: Bearer <span class="text-danger">YOUR_API_KEY</span></pre>
           <thead class="table-primary">
             <tr>
               <th width="50">#</th>
-              <th>Kelime</th>
-              <th class="text-center">Arama Sayısı</th>
-              <th>Son Arama</th>
-              <th>Ülke</th>
+              <th>Word</th>
+              <th class="text-center">Search Number</th>
+              <th>Last Search</th>
+              <th>Country</th>
             </tr>
           </thead>
           <tbody id="popularBody"></tbody>
@@ -243,7 +243,7 @@ Authorization: Bearer <span class="text-danger">YOUR_API_KEY</span></pre>
 
       <div class="text-center mt-4">
         <small class="text-muted">
-          Son güncelleme: <span id="popularUpdated">--</span>
+          Last update: <span id="popularUpdated">--</span>
         </small>
       </div>
     </div>
