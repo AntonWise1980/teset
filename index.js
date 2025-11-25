@@ -1,10 +1,8 @@
 // Load environment variables from .env file
 require('dotenv').config({ debug: false });
 const crypto = require('crypto');
-
 // Log database name for debugging
 console.log('DB_DATABASE:', process.env.DB_DATABASE);
-
 // Import required modules
 const express = require('express');
 const mysql = require('mysql2/promise');
@@ -15,7 +13,6 @@ const fetch = require('node-fetch'); // <-- EKLENDİ: Ülke tespiti için
 
 // Initialize Express app
 const app = express();
-
 if (process.env.NODE_ENV === 'production' || process.env.FORCE_HTTPS) {
   app.use((req, res, next) => {
     if (req.headers['x-forwarded-proto'] !== 'https' && req.headers['x-forwarded-proto'] !== undefined) {
@@ -24,7 +21,6 @@ if (process.env.NODE_ENV === 'production' || process.env.FORCE_HTTPS) {
     next();
   });
 }
-
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 
@@ -101,13 +97,11 @@ async function validateApiKey(req, res, next) {
     }
     return res.status(400).json({ success: false, error: 'Invalid API key format' });
   }
-
   if (!key) {
     req.isKeyValid = false;
     req.usedKeySource = 'none';
     return next();
   }
-
   const hasHeader = !!(req.headers.authorization || req.headers.Authorization);
   const hasQuery = !!req.query.key;
   if (hasHeader && hasQuery) {
@@ -117,9 +111,7 @@ async function validateApiKey(req, res, next) {
       message: 'Do not send API key in both Authorization header and query parameter.'
     });
   }
-
   keySource = hasHeader ? 'header' : 'query';
-
   try {
     const [rows] = await pool.query(
       'SELECT id, api_key, description FROM api_keys WHERE api_key = ? AND is_active = TRUE LIMIT 1',
@@ -188,10 +180,41 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/v1/synonyms', validateApiKey);
 app.use('/api/v1/synonyms', apiLimiter);
 app.use(express.static(path.join(__dirname, 'public')));
-
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+// ==================== YARDIMCI FONKSİYON (Popular Word Counter) ==================== //
+async function logSearchAndUpdatePopular(word, clientIp, ipHash, country, connection) {
+  // for Popular Word Counter (always increment)
+  const logWord = word || '(random)';
+  try {
+    await connection.query(
+      `INSERT INTO search_logs (word, ip_hash, country, searched_at)
+       VALUES (?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE searched_at = NOW(), country = VALUES(country)`,
+      [logWord, ipHash, country]
+    );
+
+    if (logWord !== '(random)') {
+      await connection.query(`
+        INSERT INTO popular_searches (word, search_count, last_searched_at, sample_country)
+        VALUES (?, 1, NOW(), ?)
+        ON DUPLICATE KEY UPDATE
+          search_count = search_count + 1,
+          last_searched_at = NOW(),
+          sample_country = IF(
+            sample_country IS NULL OR sample_country = '' OR sample_country = 'Unknown',
+            VALUES(sample_country),
+            sample_country
+          )
+      `, [logWord, country]);
+    }
+  } catch (err) {
+    console.warn('Log/popular güncelleme hatası (devam ediliyor):', err.message);
+  }
+}
+// ================================================================================ //
 
 // ========== MAIN API ENDPOINT ==========
 app.get('/api/v1/synonyms', async (req, res) => {
@@ -201,9 +224,32 @@ app.get('/api/v1/synonyms', async (req, res) => {
 
   try {
     connection = await pool.getConnection();
-    let rows = [];
 
-    // Cache kontrol
+    // ---------- IP ve ülke bilgisi (sadece gerçek arama varsa) ---------- //
+    let clientIp = getCleanIp(req);
+    let ipHash = crypto.createHash('sha256').update(clientIp).digest('hex');
+    let country = 'Unknown';
+
+    if (search) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const geoRes = await fetch(`http://ip-api.com/json/${clientIp}?fields=country`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (geoRes.ok) {
+          const geo = await geoRes.json();
+          if (geo?.country) country = geo.country;
+        }
+      } catch (e) { /* sessiz */ }
+    }
+
+    // ---------- HER ZAMAN LOGLA (cache'den dönse bile) ---------- //
+    if (search) {
+      await logSearchAndUpdatePopular(search.toLowerCase(), clientIp, ipHash, country, connection);
+      // for Popular Word Counter (always increment)
+    }
+
+    // ---------- CACHE KONTROL (loglamadan SONRA) ---------- //
     if (search) {
       const cacheKey = `synonym:${search.toLowerCase()}`;
       try {
@@ -211,6 +257,7 @@ app.get('/api/v1/synonyms', async (req, res) => {
         if (cached) {
           const parsed = JSON.parse(cached);
           parsed.meta.from_cache = true;
+          // for Popular Word Counter (always increment) → zaten yukarıda loglandı
           return res.status(200).json(parsed);
         }
       } catch (redisErr) {
@@ -218,7 +265,9 @@ app.get('/api/v1/synonyms', async (req, res) => {
       }
     }
 
-    // Arama veya random
+    // ---------- VERİ ÇEKME (random veya arama) ---------- //
+    let rows = [];
+
     if (!search) {
       const [countResult] = await connection.query('SELECT COUNT(*) as total FROM data_json_tbl');
       const total = countResult[0].total;
@@ -252,7 +301,6 @@ app.get('/api/v1/synonyms', async (req, res) => {
     const result = rows[0];
     const lowerSearch = search?.toLowerCase();
     const originalWord = (result.word || '').toString().trim().toLowerCase();
-
     result.synonyms = Array.isArray(result.synonyms) ? result.synonyms.map(s => (s || '').toString().trim().toLowerCase()) : [];
     result.antonyms = Array.isArray(result.antonyms) ? result.antonyms.map(a => (a || '').toString().trim().toLowerCase()) : [];
 
@@ -264,48 +312,6 @@ app.get('/api/v1/synonyms', async (req, res) => {
       source = 'synonyms';
     } else {
       result.word = originalWord;
-    }
-
-    // ========== YENİ: LOGLAMA VE POPÜLER KELİME GÜNCELLEME ==========
-    if (search) {
-      const clientIp = getCleanIp(req);
-      const ipHash = crypto.createHash('sha256').update(clientIp).digest('hex');
-      let country = 'Unknown';
-
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
-        const geoRes = await fetch(`http://ip-api.com/json/${clientIp}?fields=country`, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (geoRes.ok) {
-          const geo = await geoRes.json();
-          if (geo && geo.country) country = geo.country;
-        }
-      } catch (e) { /* sessiz kal */ }
-
-      const logWord = lowerSearch || '(random)';
-
-      try {
-        await connection.query(
-          `INSERT INTO search_logs (word, ip_hash, country, searched_at)
-           VALUES (?, ?, ?, NOW())
-           ON DUPLICATE KEY UPDATE searched_at = NOW(), country = VALUES(country)`,
-          [logWord, ipHash, country]
-        );
-
-        if (logWord !== '(random)') {
-          await connection.query(`
-            INSERT INTO popular_searches (word, search_count, last_searched_at, sample_country)
-            VALUES (?, 1, NOW(), ?)
-            ON DUPLICATE KEY UPDATE
-              search_count = search_count + 1,
-              last_searched_at = NOW(),
-              sample_country = IF(sample_country IS NULL OR sample_country = 'Unknown', VALUES(sample_country), sample_country)
-          `, [logWord, country]);
-        }
-      } catch (logErr) {
-        console.warn('Log/popular kaydetme hatası (devam ediliyor):', logErr.message);
-      }
     }
 
     // Console log
@@ -327,10 +333,11 @@ app.get('/api/v1/synonyms', async (req, res) => {
       }
     };
 
-    // Cache'le
+    // ---------- CACHE'E YAZ (sadece gerçek arama varsa) ---------- //
     if (search) {
       const cacheKey = `synonym:${search.toLowerCase()}`;
       await redis.set(cacheKey, JSON.stringify(response), 'EX', 3600);
+      // for Popular Word Counter (always increment) → zaten loglandı
     }
 
     res.status(200).json(response);
@@ -349,7 +356,7 @@ app.get('/api/v1/synonyms', async (req, res) => {
   }
 });
 
-// ========== YENİ: EN ÇOK ARANAN KELİMELER ENDPOINT ==========
+// ========== EN ÇOK ARANAN KELİMELER ENDPOINT ==========
 app.get('/api/v1/popular', async (req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -359,7 +366,6 @@ app.get('/api/v1/popular', async (req, res) => {
       ORDER BY search_count DESC, last_searched_at DESC
       LIMIT 20
     `);
-
     res.json({
       success: true,
       data: rows.map(r => ({
@@ -387,7 +393,6 @@ app.get(['/api', '/api/'], (req, res) => {
     rate_limit: "500/day (without key)", unlimited: "Use ?key=...", documentation: "https://synon-6f0dbe944806.herokuapp.com/", contact: "antonwise1980@gmail.com"
   });
 });
-
 app.get(['/api/v1', '/api/v1/'], (req, res) => {
   res.json({
     api: "IELTS Synonyms API", version: "v1.0", endpoint: "/api/v1/synonyms",
